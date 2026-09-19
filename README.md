@@ -65,6 +65,69 @@ Notes:
 GUIDs are emitted as `tv.plex.agents.custom.theporndb.scenes://movie/{ratingKey}`,
 where `ratingKey` is the TPDB scene id.
 
+
+## TV provider (recommended for scene libraries)
+
+Scenes map onto TV far better than onto movies:
+
+| TPDB | Plex |
+|---|---|
+| site (`Baby Got Boobs`) | show |
+| release year | season |
+| scene | episode |
+
+Register it as a **TV Shows** provider:
+
+```
+http://<host>:8080/tv
+```
+
+Identifier `tv.plex.agents.custom.theporndb.tv`, serving types 2, 3 and 4.
+
+Why this fits: Whisparr already names files
+`Site - YYYY-MM-DD - Title [quality].mp4`, which is Plex's own date-based
+episode convention. Plex sends `grandparentTitle` + `date` in the match hints,
+and those map straight onto a TPDB `parse` query - no filename reverse
+engineering needed.
+
+### Episode numbering
+
+TPDB scenes have no episode number, so `index` is derived from the air date:
+`2019-01-25` becomes episode **125** in season **2019**. Stable, ordered, and
+unique within a site-year. Two scenes released by the same site on the same
+day collide on `index`; they stay distinct by GUID.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/tv` | Manifest (types 2/3/4) |
+| POST | `/tv/library/metadata/matches` | Match show, season or episode |
+| GET | `/tv/library/metadata/show-<siteId>` | Show |
+| GET | `/tv/library/metadata/season-<siteId>-<year>` | Season |
+| GET | `/tv/library/metadata/ep-<sceneUuid>` | Episode |
+| GET | `.../children` | Seasons of a show, or episodes of a season |
+| GET | `.../grandchildren` | All episodes of a show |
+
+### Performance note
+
+Listing a show's seasons means walking every page of that site's scenes
+upstream (20 per page). Serially that measured ~36s on a 600-scene site;
+pages 2..N now go out concurrently (`TPDB_SITE_FETCH_WORKERS`, default 8),
+bringing a cold fetch to ~15s and a warm one to well under a second.
+`TPDB_MAX_SITE_PAGES` (default 30) caps the walk so a site with thousands of
+scenes cannot stall a request.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TPDB_TV_IDENTIFIER` | `tv.plex.agents.custom.theporndb.tv` | Provider id |
+| `TPDB_TV_TITLE` | `ThePornDB Scenes (TV)` | Display name |
+| `TPDB_MAX_SITE_PAGES` | `30` | Max upstream pages per site (600 scenes) |
+| `TPDB_SITE_FETCH_WORKERS` | `8` | Concurrent page fetches |
+
+Both providers run in the same container. `/scenes` (movie type) stays
+available for flat libraries whose filenames carry no usable date.
+
 ## Configuration
 
 All configuration is environment variables — the new provider API has no Plex-side

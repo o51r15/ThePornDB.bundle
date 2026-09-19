@@ -2,6 +2,7 @@
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -9,7 +10,7 @@ from .config import config
 
 log = logging.getLogger(__name__)
 
-_session = requests.Session()
+_local = threading.local()
 _cache = {}
 _cache_lock = threading.Lock()
 
@@ -34,6 +35,14 @@ def _cache_put(key, value):
         return
     with _cache_lock:
         _cache[key] = (time.time(), value)
+
+
+def _get_session():
+    session = getattr(_local, 'session', None)
+    if session is None:
+        session = requests.Session()
+        _local.session = session
+    return session
 
 
 def _headers():
@@ -63,8 +72,9 @@ def get_json(path, params=None):
     last_error = None
     for attempt in range(1, config.retries + 1):
         try:
-            resp = _session.get(url, params=params, headers=_headers(),
-                                timeout=config.timeout)
+            resp = _get_session().get(url, params=params,
+                                      headers=_headers(),
+                                      timeout=config.timeout)
         except requests.RequestException as exc:
             last_error = exc
             log.warning('request failed (attempt %d/%d) %s: %s',
@@ -122,3 +132,65 @@ def get_site(site_id):
     if not body:
         return None
     return body.get('data')
+
+
+def search_sites(query):
+    """Site search. Only `q` actually filters - `search`/`parse` are ignored
+    upstream and return the whole 103k-row site table."""
+    body = get_json('/sites', {'q': query})
+    if not body:
+        return []
+    return body.get('data') or []
+
+
+def scenes_for_site(site_id, max_pages=None):
+    """Every scene for a site, walking upstream pagination in parallel.
+
+    Upstream pages at 20 items with meta.last_page. A popular site runs to
+    30+ pages and fetching them serially took ~36s wall time - almost all of
+    it network wait - which Plex will not sit through. Page 1 is fetched
+    first to learn last_page, then the rest go out concurrently.
+    """
+    if max_pages is None:
+        max_pages = config.max_site_pages
+
+    first = get_json('/scenes', {'site_id': site_id, 'page': 1})
+    if not first:
+        return []
+
+    scenes = [s for s in (first.get('data') or []) if isinstance(s, dict)]
+
+    meta = first.get('meta') or {}
+    try:
+        last = int(meta.get('last_page') or 1)
+    except (TypeError, ValueError):
+        last = 1
+    last = min(last, max_pages)
+    if last <= 1:
+        return scenes
+
+    pages = list(range(2, last + 1))
+    bodies = {}
+    workers = max(1, min(config.site_fetch_workers, len(pages)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(get_json, '/scenes', {'site_id': site_id, 'page': p}): p
+            for p in pages
+        }
+        for future in as_completed(futures):
+            page = futures[future]
+            try:
+                bodies[page] = future.result()
+            except Exception as exc:
+                log.warning('page %d of site %s failed: %s', page, site_id, exc)
+                bodies[page] = None
+
+    # reassemble in page order so date sorting downstream is stable
+    for page in pages:
+        body = bodies.get(page)
+        if not body:
+            continue
+        scenes.extend(s for s in (body.get('data') or [])
+                      if isinstance(s, dict))
+
+    return scenes

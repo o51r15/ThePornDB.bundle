@@ -8,7 +8,7 @@ import logging
 from flask import Blueprint, Flask, jsonify, request
 
 from .config import config
-from . import mapping, selftest, tpdb
+from . import mapping, selftest, tpdb, tv
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +149,7 @@ def create_app():
 
     app = Flask(__name__)
     app.register_blueprint(bp, url_prefix='/scenes')
+    app.register_blueprint(tv.bp, url_prefix='/tv')
 
     @app.route('/health')
     def health():
@@ -156,6 +157,10 @@ def create_app():
             'status': 'ok',
             'provider': config.identifier,
             'apiKeyConfigured': bool(config.api_key),
+            'providers': {
+                'movies': '/scenes',
+                'tv': '/tv',
+            },
             'selftest': '/scenes/selftest?q=<title>',
         })
 

@@ -55,6 +55,12 @@ class Config(object):
     custom_title = _str('TPDB_CUSTOM_TITLE', '{actors} - {title} [{studio}/{series}]')
     save_to_collection = _bool('TPDB_SAVE_TO_COLLECTION', False)
 
+    # --- tv provider (site = show, year = season, scene = episode) ---
+    tv_identifier = _str('TPDB_TV_IDENTIFIER', 'tv.plex.agents.custom.theporndb.tv')
+    tv_title = _str('TPDB_TV_TITLE', 'ThePornDB Scenes (TV)')
+    max_site_pages = int(_str('TPDB_MAX_SITE_PAGES', '30'))
+    site_fetch_workers = int(_str('TPDB_SITE_FETCH_WORKERS', '8'))
+
     # --- service ---
     log_level = _str('TPDB_LOG_LEVEL', 'INFO')
 
