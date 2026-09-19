@@ -429,6 +429,28 @@ def _match_episode(hints):
     return container(items[start:start + size], offset=start, total=len(items))
 
 
+def _wants_children():
+    return str(request.args.get('includeChildren') or '') in ('1', 'true')
+
+
+def _seasons_for(site, site_id):
+    scenes = tpdb.scenes_for_site(site_id)
+    counts = {}
+    for scene in scenes:
+        scene_year = year_of(scene)
+        if scene_year:
+            counts[scene_year] = counts.get(scene_year, 0) + 1
+    return [make_season(site, y, counts[y]) for y in sorted(counts)]
+
+
+def _episodes_for(site, site_id, year=None):
+    scenes = tpdb.scenes_for_site(site_id)
+    if year is not None:
+        scenes = [s for s in scenes if year_of(s) == str(year)]
+    scenes.sort(key=lambda s: s.get('date') or '')
+    return [scene_to_episode(s, site) for s in scenes]
+
+
 @bp.route('/library/metadata/<rating_key>', methods=['GET'])
 def metadata(rating_key):
     kind, ident, year = parse_key(rating_key)
@@ -437,13 +459,22 @@ def metadata(rating_key):
         site = tpdb.get_site(ident)
         if not site:
             return jsonify({'error': 'not found'}), 404
-        return container([site_to_show(site)])
+        item = site_to_show(site)
+        if _wants_children():
+            # Plex asks for the show with includeChildren=1 and expects the
+            # seasons inline. Returning the bare show made Plex treat it as
+            # having no seasons, so nothing underneath could ever match.
+            item['Children'] = _seasons_for(site, ident)
+        return container([item])
 
     if kind == 'season':
         site = tpdb.get_site(ident)
         if not site:
             return jsonify({'error': 'not found'}), 404
-        return container([make_season(site, year)])
+        item = make_season(site, year)
+        if _wants_children():
+            item['Children'] = _episodes_for(site, ident, year)
+        return container([item])
 
     if kind == 'episode':
         scene = tpdb.get_scene(ident)
@@ -463,22 +494,13 @@ def children(rating_key):
         site = tpdb.get_site(ident)
         if not site:
             return jsonify({'error': 'not found'}), 404
-        scenes = tpdb.scenes_for_site(ident)
-        counts = {}
-        for scene in scenes:
-            scene_year = year_of(scene)
-            if scene_year:
-                counts[scene_year] = counts.get(scene_year, 0) + 1
-        seasons = [make_season(site, y, counts[y]) for y in sorted(counts)]
+        seasons = _seasons_for(site, ident)
         return container(seasons[start:start + size], offset=start,
                          total=len(seasons))
 
     if kind == 'season':
         site = tpdb.get_site(ident)
-        scenes = [s for s in tpdb.scenes_for_site(ident)
-                  if year_of(s) == str(year)]
-        scenes.sort(key=lambda s: s.get('date') or '')
-        episodes = [scene_to_episode(s, site) for s in scenes]
+        episodes = _episodes_for(site, ident, year)
         return container(episodes[start:start + size], offset=start,
                          total=len(episodes))
 
@@ -500,8 +522,6 @@ def grandchildren(rating_key):
         return container([], total=0)
 
     site = tpdb.get_site(ident)
-    scenes = tpdb.scenes_for_site(ident)
-    scenes.sort(key=lambda s: s.get('date') or '')
-    episodes = [scene_to_episode(s, site) for s in scenes]
+    episodes = _episodes_for(site, ident)
     return container(episodes[start:start + size], offset=start,
                      total=len(episodes))
