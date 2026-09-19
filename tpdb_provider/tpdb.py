@@ -146,15 +146,18 @@ def search_sites(query):
 def scenes_for_site(site_id, max_pages=None):
     """Every scene for a site, walking upstream pagination in parallel.
 
-    Upstream pages at 20 items with meta.last_page. A popular site runs to
-    30+ pages and fetching them serially took ~36s wall time - almost all of
-    it network wait - which Plex will not sit through. Page 1 is fetched
-    first to learn last_page, then the rest go out concurrently.
+    Upstream accepts per_page up to 100 (200 returns nothing), which cuts a
+    4000-scene site from 201 requests to 41. Page 1 is fetched first to learn
+    last_page, then the rest go out concurrently - serial fetching measured
+    ~36s wall time, almost all of it network wait, which Plex will not sit
+    through.
     """
     if max_pages is None:
         max_pages = config.max_site_pages
 
-    first = get_json('/scenes', {'site_id': site_id, 'page': 1})
+    per_page = config.site_page_size
+    first = get_json('/scenes', {'site_id': site_id, 'page': 1,
+                                 'per_page': per_page})
     if not first:
         return []
 
@@ -174,7 +177,9 @@ def scenes_for_site(site_id, max_pages=None):
     workers = max(1, min(config.site_fetch_workers, len(pages)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(get_json, '/scenes', {'site_id': site_id, 'page': p}): p
+            pool.submit(get_json, '/scenes',
+                        {'site_id': site_id, 'page': p,
+                         'per_page': per_page}): p
             for p in pages
         }
         for future in as_completed(futures):

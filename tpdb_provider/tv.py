@@ -255,15 +255,21 @@ def container(items, offset=0, total=None):
 
 
 def paging():
-    try:
-        start = int(request.headers.get('X-Plex-Container-Start', 0))
-    except ValueError:
-        start = 0
-    try:
-        size = int(request.headers.get('X-Plex-Container-Size', config.max_results))
-    except ValueError:
-        size = config.max_results
-    return max(0, start), max(1, size)
+    """Plex sends X-Plex-Container-Start/Size as QUERY PARAMETERS on GETs,
+    not as headers. Reading only headers made every children page return the
+    same first slice, so Plex walked 0..580 and got identical bodies back."""
+    def _int(name, default):
+        raw = request.args.get(name)
+        if raw is None:
+            raw = request.headers.get(name)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
+
+    start = max(0, _int('X-Plex-Container-Start', 0))
+    size = _int('X-Plex-Container-Size', config.max_results)
+    return start, max(1, min(size, config.max_page_size))
 
 
 def _resolve_site(name):
@@ -476,6 +482,12 @@ def children(rating_key):
         return container(episodes[start:start + size], offset=start,
                          total=len(episodes))
 
+    return container([], total=0)
+
+
+@bp.route('/library/metadata/<rating_key>/extras', methods=['GET'])
+def extras(rating_key):
+    # Plex asks every show for extras; an empty container beats a 404.
     return container([], total=0)
 
 

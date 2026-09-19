@@ -41,6 +41,7 @@ class Config(object):
     cleanup_regex = _str('TPDB_CLEANUP_REGEX')
     cleanup_replace = _str('TPDB_CLEANUP_REPLACE')
     max_results = int(_str('TPDB_MAX_RESULTS', '20'))
+    max_page_size = int(_str('TPDB_MAX_PAGE_SIZE', '500'))
 
     # --- metadata shaping ---
     content_rating = _str('TPDB_CONTENT_RATING', 'XXX')
@@ -58,7 +59,8 @@ class Config(object):
     # --- tv provider (site = show, year = season, scene = episode) ---
     tv_identifier = _str('TPDB_TV_IDENTIFIER', 'tv.plex.agents.custom.theporndb.tv')
     tv_title = _str('TPDB_TV_TITLE', 'ThePornDB Scenes (TV)')
-    max_site_pages = int(_str('TPDB_MAX_SITE_PAGES', '30'))
+    site_page_size = int(_str('TPDB_SITE_PAGE_SIZE', '100'))
+    max_site_pages = int(_str('TPDB_MAX_SITE_PAGES', '60'))
     site_fetch_workers = int(_str('TPDB_SITE_FETCH_WORKERS', '8'))
 
     # --- service ---
