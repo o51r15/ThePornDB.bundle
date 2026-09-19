@@ -24,6 +24,8 @@ bp = Blueprint('tv', __name__)
 SHOW, SEASON, EPISODE = 2, 3, 4
 
 DATE_RE = re.compile(r'(\d{4})-(\d{2})-(\d{2})')
+# scene-release naming: BrandNewAmateurs.24.02.02.Keyton.Keem...
+DOTTED_DATE_RE = re.compile(r'(?<!\d)(\d{2})\.(\d{2})\.(\d{2})(?!\d)')
 
 
 # --------------------------------------------------------------- keys / guids
@@ -294,7 +296,34 @@ def _hint_date(hints):
         found = DATE_RE.search(str(hints.get(key) or ''))
         if found:
             return found.group(0)
+    # release naming carries the date as YY.MM.DD
+    found = DOTTED_DATE_RE.search(str(hints.get('filename') or ''))
+    if found:
+        yy, mm, dd = found.groups()
+        if 1 <= int(mm) <= 12 and 1 <= int(dd) <= 31:
+            return '20%s-%s-%s' % (yy, mm, dd)
     return None
+
+
+def _hint_year(hints):
+    """Which of our year-seasons the request is really about.
+
+    Plex sends index=<year> only when the filename carries S<year>E<n>.
+    Otherwise its scanner falls back to season 1, so we recover the year
+    from whatever date is in the filename.
+    """
+    try:
+        index = int(hints.get('index'))
+    except (TypeError, ValueError):
+        index = None
+    if index and index > 1900:
+        return str(index)
+    date = _hint_date(hints)
+    return date[:4] if date else None
+
+
+def _hint_wants_children(hints):
+    return str(hints.get('includeChildren') or '') in ('1', 'true', 'True')
 
 
 @bp.route('', methods=['GET'])
@@ -376,16 +405,16 @@ def _match_season(hints):
     if not site:
         return container([])
 
-    year = hints.get('index') or hints.get('year')
+    year = _hint_year(hints)
     if not year:
-        return container([])
-    try:
-        year = str(int(year))
-    except (TypeError, ValueError):
         return container([])
 
     item = make_season(site, year)
     item['score'] = 100
+    # Plex sends includeChildren=1 on the season match and binds its files to
+    # whatever children come back - it never sends a type=4 episode match.
+    if _hint_wants_children(hints):
+        item['Children'] = _episodes_for(site, site.get('id'), year)
     return container([item])
 
 
