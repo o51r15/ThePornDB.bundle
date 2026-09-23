@@ -215,6 +215,75 @@ class HashTest(unittest.TestCase):
                                 'hash': '8e245d9679d31e12'})
         self.assertNotIn('hash', sent)
 
+class MoviesProviderTest(unittest.TestCase):
+    """The bundle shipped Scenes, Movies and JAV as three copies of one agent
+    differing only in the upstream path. Same factory here - so the thing worth
+    testing is that each provider hits its own TPDB collection and stamps its
+    own identifier."""
+
+    def setUp(self):
+        self.app = create_app().test_client()
+
+    def _kind_used(self, prefix):
+        seen = {}
+        def fake(path, params=None):
+            seen['path'] = path
+            return {'data': []}
+        with mock.patch.object(tpdb, 'get_json', side_effect=fake):
+            self.app.post(prefix + '/library/metadata/matches',
+                          json={'type': 1, 'title': 'anything'})
+        return seen.get('path')
+
+    def test_each_provider_queries_its_own_collection(self):
+        self.assertEqual(self._kind_used('/scenes'), '/scenes')
+        self.assertEqual(self._kind_used('/movies'), '/movies')
+
+    def test_movies_manifest_is_its_own_provider(self):
+        scenes = self.app.get('/scenes').get_json()['MediaProvider']
+        movies = self.app.get('/movies').get_json()['MediaProvider']
+        self.assertNotEqual(scenes['identifier'], movies['identifier'])
+        self.assertTrue(movies['identifier'].startswith('tv.plex.agents.custom.'))
+        self.assertEqual(movies['title'], 'ThePornDB Movies')
+        self.assertEqual(movies['Types'][0]['type'], 1)
+        self.assertEqual(movies['Types'][0]['Scheme'][0]['scheme'],
+                         movies['identifier'])
+
+    def test_movie_guids_carry_the_movies_identifier(self):
+        movie = {'id': 'mv-1', 'title': 'Some Feature', 'date': '2014-05-06',
+                 'description': 'd', 'duration': 7200,
+                 'site': {'id': 1, 'name': 'Studio'},
+                 'performers': [], 'tags': [],
+                 'posters': {'large': 'http://img/p.jpg'},
+                 'background': {'full': 'http://img/b.jpg'}}
+        with mock.patch.object(tpdb, 'get_scene', return_value=movie):
+            m = self.app.get('/movies/library/metadata/mv-1').get_json()
+        item = m['MediaContainer']['Metadata'][0]
+        self.assertTrue(item['guid'].startswith(
+            'tv.plex.agents.custom.theporndb.movies://movie/'))
+        self.assertEqual(m['MediaContainer']['identifier'],
+                         'tv.plex.agents.custom.theporndb.movies')
+        self.assertEqual(item['title'], 'Some Feature')
+        self.assertEqual(item['duration'], 7200000)
+
+    def test_movies_metadata_fetch_uses_movies_path(self):
+        seen = {}
+        def fake(path, params=None):
+            seen['path'] = path
+            return {'data': {'id': 'x', 'title': 't'}}
+        with mock.patch.object(tpdb, 'get_json', side_effect=fake):
+            self.app.get('/movies/library/metadata/x')
+        self.assertEqual(seen['path'], '/movies/x')
+
+    def test_jav_is_off_by_default(self):
+        self.assertEqual(self.app.get('/jav').status_code, 404)
+
+    def test_health_lists_the_live_providers(self):
+        providers = self.app.get('/health').get_json()['providers']
+        self.assertEqual(providers.get('scenes'), '/scenes')
+        self.assertEqual(providers.get('movies'), '/movies')
+        self.assertEqual(providers.get('tv'), '/tv')
+        self.assertNotIn('jav', providers)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

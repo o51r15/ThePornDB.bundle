@@ -1,4 +1,4 @@
-"""Plex custom metadata provider for ThePornDB (Scenes).
+"""Plex custom metadata providers for ThePornDB (Scenes, Movies, JAV).
 
 Implements the provider contract documented at
 https://developer.plex.tv/pms/  (API Info -> Metadata Providers).
@@ -12,15 +12,13 @@ from . import mapping, selftest, tpdb, tv
 
 log = logging.getLogger(__name__)
 
-bp = Blueprint('scenes', __name__)
-
 MOVIE = 1
 
 
-def container(metadata, offset=0, total=None):
+def container(metadata, offset=0, total=None, identifier=None):
     items = metadata if isinstance(metadata, list) else [metadata]
     return jsonify({'MediaContainer': {
-        'identifier': config.identifier,
+        'identifier': identifier or config.identifier,
         'size': len(items),
         'totalSize': len(items) if total is None else total,
         'offset': offset,
@@ -46,111 +44,119 @@ def paging():
     return start, max(1, min(size, config.max_page_size))
 
 
-@bp.route('', methods=['GET'])
-@bp.route('/', methods=['GET'])
-def manifest():
-    """Provider root: the MediaProvider document PMS reads on registration."""
-    return jsonify({'MediaProvider': {
-        'identifier': config.identifier,
-        'title': config.title,
-        'version': config.version,
-        'Types': [
-            {'type': MOVIE, 'Scheme': [{'scheme': config.identifier}]},
-        ],
-        'Feature': [
-            {'type': 'metadata', 'key': '/library/metadata'},
-            {'type': 'match', 'key': '/library/metadata/matches'},
-        ],
-    }})
+def make_provider(name, identifier, title, kind):
+    """One movie-type provider bound to a TPDB collection.
 
+    The bundle shipped Scenes, Movies and JAV as three copies of the same
+    agent differing only in the upstream path, so they are one factory here.
+    """
+    bp = Blueprint(name, __name__)
 
-@bp.route('/library/metadata/matches', methods=['POST'])
-def matches():
-    hints = request.get_json(silent=True) or {}
-    if not hints:
-        hints = request.form.to_dict() or request.args.to_dict()
+    def box(metadata, offset=0, total=None):
+        return container(metadata, offset, total, identifier=identifier)
 
-    log.debug('match hints: %s', hints)
+    @bp.route('', methods=['GET'])
+    @bp.route('/', methods=['GET'])
+    def manifest():
+        """Provider root: the MediaProvider document PMS reads on registration."""
+        return jsonify({'MediaProvider': {
+            'identifier': identifier,
+            'title': title,
+            'version': config.version,
+            'Types': [
+                {'type': MOVIE, 'Scheme': [{'scheme': identifier}]},
+            ],
+            'Feature': [
+                {'type': 'metadata', 'key': '/library/metadata'},
+                {'type': 'match', 'key': '/library/metadata/matches'},
+            ],
+        }})
 
-    if hints.get('type') and str(hints['type']) != str(MOVIE):
-        return container([])
+    @bp.route('/library/metadata/matches', methods=['POST'])
+    def matches():
+        hints = request.get_json(silent=True) or {}
+        if not hints:
+            hints = request.form.to_dict() or request.args.to_dict()
 
-    # An explicit guid, or a TPDB id embedded in the title/filename, is exact.
-    scene_id = None
-    guid = hints.get('guid') or ''
-    if guid.startswith(config.identifier + '://'):
-        scene_id = guid.rsplit('/', 1)[-1]
-    if not scene_id:
-        scene_id = (mapping.extract_id(hints.get('title'))
-                    or mapping.extract_id(hints.get('filename')))
+        log.debug('match hints: %s', hints)
 
-    if scene_id:
-        scene = tpdb.get_scene(scene_id)
+        if hints.get('type') and str(hints['type']) != str(MOVIE):
+            return box([])
+
+        # An explicit guid, or a TPDB id embedded in the title/filename, is exact.
+        scene_id = None
+        guid = hints.get('guid') or ''
+        if guid.startswith(identifier + '://'):
+            scene_id = guid.rsplit('/', 1)[-1]
+        if not scene_id:
+            scene_id = (mapping.extract_id(hints.get('title'))
+                        or mapping.extract_id(hints.get('filename')))
+
+        if scene_id:
+            scene = tpdb.get_scene(scene_id, kind=kind)
+            if not scene:
+                return box([])
+            item = mapping.to_match(scene, '', 0, identifier)
+            item['score'] = 100
+            return box([item])
+
+        query = mapping.build_query(hints)
+        if not query:
+            return box([])
+
+        results = tpdb.search_scenes(
+            query, kind=kind,
+            oshash=hints.get('hash') or hints.get('openSubtitleHash'))
+        start, size = paging()
+
+        items = [mapping.to_match(scene, query, idx, identifier)
+                 for idx, scene in enumerate(results) if isinstance(scene, dict)]
+        items.sort(key=lambda i: i.get('score', 0), reverse=True)
+
+        if not hints.get('manual'):
+            items = items[:size]
+        page = items[start:start + size]
+        return box(page, offset=start, total=len(items))
+
+    @bp.route('/library/metadata/<rating_key>', methods=['GET'])
+    def metadata(rating_key):
+        scene = tpdb.get_scene(rating_key, kind=kind,
+                               add_to_collection=config.save_to_collection)
         if not scene:
-            return container([])
-        item = mapping.to_match(scene, '', 0)
-        item['score'] = 100
-        return container([item])
+            return jsonify({'error': 'not found'}), 404
+        return box([mapping.to_metadata(scene, identifier)])
 
-    query = mapping.build_query(hints)
-    if not query:
-        return container([])
+    @bp.route('/library/metadata/<rating_key>/images', methods=['GET'])
+    def images(rating_key):
+        scene = tpdb.get_scene(rating_key, kind=kind)
+        if not scene:
+            return jsonify({'error': 'not found'}), 404
+        item = mapping.to_metadata(scene, identifier)
+        return jsonify({'MediaContainer': {
+            'identifier': identifier,
+            'size': len(item.get('Image', [])),
+            'Image': item.get('Image', []),
+        }})
 
-    results = tpdb.search_scenes(
-        query, oshash=hints.get('hash') or hints.get('openSubtitleHash'))
-    start, size = paging()
+    @bp.route('/selftest', methods=['GET'])
+    def selftest_route():
+        """Validate the upstream contract with a real API call."""
+        query = request.args.get('q') or 'Brazzers'
+        report = selftest.run(query)
+        code = 200 if report.get('status') == 'ok' else 503
+        return jsonify(report), code
 
-    items = [mapping.to_match(scene, query, idx)
-             for idx, scene in enumerate(results) if isinstance(scene, dict)]
-    items.sort(key=lambda i: i.get('score', 0), reverse=True)
+    @bp.route('/library/metadata/<rating_key>/extras', methods=['GET'])
+    def extras(rating_key):
+        return box([], total=0)
 
-    if not hints.get('manual'):
-        items = items[:size]
-    page = items[start:start + size]
-    return container(page, offset=start, total=len(items))
+    @bp.route('/library/metadata/<rating_key>/children', methods=['GET'])
+    @bp.route('/library/metadata/<rating_key>/grandchildren', methods=['GET'])
+    def children(rating_key):
+        # Movies have no children; the endpoints exist so PMS gets a clean answer.
+        return box([], total=0)
 
-
-@bp.route('/library/metadata/<rating_key>', methods=['GET'])
-def metadata(rating_key):
-    scene = tpdb.get_scene(rating_key,
-                           add_to_collection=config.save_to_collection)
-    if not scene:
-        return jsonify({'error': 'not found'}), 404
-    return container([mapping.to_metadata(scene)])
-
-
-@bp.route('/library/metadata/<rating_key>/images', methods=['GET'])
-def images(rating_key):
-    scene = tpdb.get_scene(rating_key)
-    if not scene:
-        return jsonify({'error': 'not found'}), 404
-    item = mapping.to_metadata(scene)
-    return jsonify({'MediaContainer': {
-        'identifier': config.identifier,
-        'size': len(item.get('Image', [])),
-        'Image': item.get('Image', []),
-    }})
-
-
-@bp.route('/selftest', methods=['GET'])
-def selftest_route():
-    """Validate the upstream contract with a real API call."""
-    query = request.args.get('q') or 'Brazzers'
-    report = selftest.run(query)
-    code = 200 if report.get('status') == 'ok' else 503
-    return jsonify(report), code
-
-
-@bp.route('/library/metadata/<rating_key>/extras', methods=['GET'])
-def extras(rating_key):
-    return container([], total=0)
-
-
-@bp.route('/library/metadata/<rating_key>/children', methods=['GET'])
-@bp.route('/library/metadata/<rating_key>/grandchildren', methods=['GET'])
-def children(rating_key):
-    # Movies have no children; the endpoints exist so PMS gets a clean answer.
-    return container([], total=0)
+    return bp
 
 
 def create_app():
@@ -159,19 +165,36 @@ def create_app():
         format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
     app = Flask(__name__)
-    app.register_blueprint(bp, url_prefix='/scenes')
+    registered = {}
+
+    app.register_blueprint(
+        make_provider('scenes', config.identifier, config.title, 'scenes'),
+        url_prefix='/scenes')
+    registered['scenes'] = '/scenes'
+
+    if config.movies_enable:
+        app.register_blueprint(
+            make_provider('movies', config.movies_identifier,
+                          config.movies_title, 'movies'),
+            url_prefix='/movies')
+        registered['movies'] = '/movies'
+
+    if config.jav_enable:
+        app.register_blueprint(
+            make_provider('jav', config.jav_identifier,
+                          config.jav_title, 'jav'),
+            url_prefix='/jav')
+        registered['jav'] = '/jav'
+
     app.register_blueprint(tv.bp, url_prefix='/tv')
+    registered['tv'] = '/tv'
 
     @app.route('/health')
     def health():
         return jsonify({
             'status': 'ok',
-            'provider': config.identifier,
             'apiKeyConfigured': bool(config.api_key),
-            'providers': {
-                'movies': '/scenes',
-                'tv': '/tv',
-            },
+            'providers': registered,
             'selftest': '/scenes/selftest?q=<title>',
         })
 
