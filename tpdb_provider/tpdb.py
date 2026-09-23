@@ -112,7 +112,12 @@ def get_json(path, params=None):
 OSHASH_RE = re.compile(r'^[0-9a-fA-F]{16}$')
 
 
-def search_scenes(query, oshash=None):
+def search_scenes(query, oshash=None, kind='scenes'):
+    """`kind` picks the upstream collection: scenes, movies or jav.
+
+    The old bundle shipped three near-identical agents whose only real
+    difference was this path, so one client serves all of them.
+    """
     params = {'parse': query}
     # TPDB rejects the whole request with 422 "The hash must be valid hash."
     # if this is anything but a real 16-hex-digit OpenSubtitles hash, and Plex
@@ -121,7 +126,7 @@ def search_scenes(query, oshash=None):
         params['hash'] = str(oshash).strip()
     elif oshash:
         log.debug('ignoring unusable hash %r', oshash)
-    body = get_json('/scenes', params)
+    body = get_json('/%s' % kind, params)
     if not body:
         return []
     if body.get('error'):
@@ -130,9 +135,9 @@ def search_scenes(query, oshash=None):
     return body.get('data') or []
 
 
-def get_scene(scene_id, add_to_collection=False):
+def get_scene(scene_id, add_to_collection=False, kind='scenes'):
     params = {'add_to_collection': 1} if add_to_collection else None
-    body = get_json('/scenes/%s' % scene_id, params)
+    body = get_json('/%s/%s' % (kind, scene_id), params)
     if not body:
         return None
     return body.get('data')

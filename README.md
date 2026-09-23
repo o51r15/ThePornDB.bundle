@@ -27,9 +27,10 @@ endpoint to identify it, and hands Plex back a fully populated item: real scene
 title, studio, air date, runtime, cast with headshots, genres, poster and
 background art, and site / parent / network collections.
 
-**`/scenes` is the one you want.** It models each scene as a movie and groups
-them with site, parent and network collections — the behaviour of the old Scenes
-bundle, and it needs no changes to your filenames.
+**`/scenes` is the one you want for scene releases.** It models each scene as a
+movie and groups them with site, parent and network collections — the behaviour
+of the old Scenes bundle, and it needs no changes to your filenames. For full
+feature releases, **`/movies`** does the same against TPDB's movie catalogue.
 
 A second provider, **`/tv`**, models the site as a show and each scene as an
 episode. It works, but Plex's TV scanner cannot assign season or episode numbers
@@ -40,7 +41,8 @@ as optional — see [TV provider](#tv-provider-optional).
 
 ## Features
 
-- **Drop-in replacement** — `/scenes` reproduces the old Scenes bundle: movie-type library, matched on filename, no renaming required
+- **Drop-in replacement** — `/scenes` and `/movies` reproduce the old Scenes and Movies bundles: movie-type libraries, matched on filename, no renaming required
+- **JAV** — the third bundle's `/jav` catalogue is wired the same way, off by default
 - **Filename identification** — hands the raw filename to TPDB's `parse` endpoint, the same call the bundle relied on; handles `Site - YYYY-MM-DD - Title`, release-style `Site.YY.MM.DD.stuff`, and messier names
 - **Every bundle preference ported** — filename cleanup regex, score method, custom title format, collection prefixes, oshash matching, collected-tagging; all as environment variables
 - **Full metadata** — title, studio, summary, air date, runtime, content rating, genres, cast with face images, poster and background art, trailers
@@ -108,10 +110,16 @@ gunicorn --bind 0.0.0.0:8080 wsgi:app       # prod
 
 ## Providers
 
-| Provider | Plex library | Model | Filenames | Status |
+| Provider | Plex library | Upstream | Model | Filenames |
 |---|---|---|---|---|
-| **`/scenes`** | Movie | One scene = one item, grouped by site / parent / network collections | Any — matched on filename | **Recommended** |
-| `/tv` | TV Shows | Site = show, release year = season, scene = episode | Must carry `S<year>E<MMDD>` | Optional, needs a rename pass |
+| **`/scenes`** | Movie | `/scenes` | One scene = one item, grouped by site / parent / network collections | Any — matched on filename |
+| **`/movies`** | Movie | `/movies` | One full release = one item | Any — matched on filename |
+| `/jav` | Movie | `/jav` | JAV releases — **off by default**, set `TPDB_JAV_ENABLE=true` | Any — matched on filename |
+| `/tv` | TV Shows | `/scenes` | Site = show, release year = season, scene = episode | Must carry `S<year>E<MMDD>` — needs a rename pass |
+
+Scenes and full movie releases are different catalogues upstream, so they get a
+library each: point a Scenes library at `/scenes` and a Movies library at
+`/movies`. Both are movie-type and neither needs renaming.
 
 ---
 
@@ -123,6 +131,11 @@ gunicorn --bind 0.0.0.0:8080 wsgi:app       # prod
 
 That's the whole setup. Scenes are identified from their filenames and grouped
 into collections by site, parent studio and network.
+
+For a library of full releases rather than scenes, repeat those three steps with
+`http://your-server:8080/movies` and a second agent. The two are separate
+providers with separate identifiers, so one library never matches against the
+other's catalogue.
 
 > **Important:** a metadata *refresh* never re-matches. Items that failed to match are stored as `local://` stubs and stay that way. Only a fresh scan of a file Plex has not seen, or a manual **Fix Match**, creates a new binding. After changing provider behaviour, Fix Match one item to verify, then recreate the library.
 
@@ -136,6 +149,11 @@ Everything is environment variables — the provider API has no Plex-side prefer
 |---|---|---|---|
 | `TPDB_API_KEY` | `personal_api_key` | — | **Required** |
 | `TPDB_IDENTIFIER` | — | `tv.plex.agents.custom.theporndb.scenes` | Must start with `tv.plex.agents.custom.` |
+| `TPDB_MOVIES_ENABLE` | — | `true` | Serve `/movies` |
+| `TPDB_MOVIES_IDENTIFIER` | — | `tv.plex.agents.custom.theporndb.movies` | |
+| `TPDB_MOVIES_TITLE` | — | `ThePornDB Movies` | |
+| `TPDB_JAV_ENABLE` | — | `false` | Serve `/jav` |
+| `TPDB_JAV_IDENTIFIER` | — | `tv.plex.agents.custom.theporndb.jav` | |
 | `TPDB_TV_IDENTIFIER` | — | `tv.plex.agents.custom.theporndb.tv` | |
 | `TPDB_MATCH_BY_FILENAME` | `match_by_filepath_enable` | `true` | Use the filename rather than Plex's cleaned title |
 | `TPDB_STRIP_PATH` | `filepath_strip_path_enable` | `true` | |
@@ -210,7 +228,7 @@ It handles ISO dates, `YY.MM.DD` release style and `DD.MM.YYYY`, skips names alr
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/scenes` · `/tv` | Provider manifest |
+| `GET` | `/scenes` · `/movies` · `/jav` · `/tv` | Provider manifest |
 | `POST` | `.../library/metadata/matches` | Match feature |
 | `GET` | `.../library/metadata/{ratingKey}` | Metadata — `?includeChildren=1` embeds children |
 | `GET` | `.../library/metadata/{ratingKey}/children` | Seasons of a show, or episodes of a season |
@@ -259,7 +277,7 @@ Undocumented behaviour that cost real debugging time, recorded so the next perso
 ## Tests
 
 ```bash
-python3 tests/test_provider.py     # 16
+python3 tests/test_provider.py     # 22
 python3 tests/test_tv.py           # 30
 ```
 

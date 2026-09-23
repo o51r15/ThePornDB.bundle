@@ -14,7 +14,7 @@ TYPE_MOVIE = 1
 
 ID_REGEXES = [
     re.compile(r'\[(?:theporndbid|TPDBID)=(?P<id>[^\]]+)\]', re.IGNORECASE),
-    re.compile(r'^https?://(?:api\.)?theporndb\.net/scenes/(?P<id>[^/?#]+)', re.IGNORECASE),
+    re.compile(r'^https?://(?:api\.)?theporndb\.net/(?:scenes|movies|jav)/(?P<id>[^/?#]+)', re.IGNORECASE),
 ]
 
 _RATING_KEY_SAFE = re.compile(r'[^A-Za-z0-9_-]')
@@ -25,8 +25,8 @@ def safe_rating_key(value):
     return _RATING_KEY_SAFE.sub('-', str(value or ''))
 
 
-def guid_for(rating_key):
-    return '%s://movie/%s' % (config.identifier, rating_key)
+def guid_for(rating_key, identifier=None):
+    return '%s://movie/%s' % (identifier or config.identifier, rating_key)
 
 
 def key_for(rating_key):
@@ -206,7 +206,7 @@ def apply_custom_title(title, roles, studio, collections):
         return title
 
 
-def to_match(scene, query, index):
+def to_match(scene, query, index, identifier=None):
     """A lightweight Metadata object for POST /library/metadata/matches."""
     rating_key = safe_rating_key(scene.get('id'))
     site = _site_of(scene)
@@ -222,7 +222,7 @@ def to_match(scene, query, index):
     item = {
         'ratingKey': rating_key,
         'key': key_for(rating_key),
-        'guid': guid_for(rating_key),
+        'guid': guid_for(rating_key, identifier),
         'type': 'movie',
         'title': display,
         'score': score_for(scene, query, index, title, site_name, date),
@@ -259,7 +259,7 @@ def score_for(scene, query, index, title, site_name, date):
     return max(0, 100 - index)
 
 
-def to_metadata(scene):
+def to_metadata(scene, identifier=None):
     """The full Metadata object for GET /library/metadata/{ratingKey}."""
     rating_key = safe_rating_key(scene.get('id'))
     site = _site_of(scene)
@@ -276,7 +276,7 @@ def to_metadata(scene):
     item = {
         'ratingKey': rating_key,
         'key': key_for(rating_key),
-        'guid': guid_for(rating_key),
+        'guid': guid_for(rating_key, identifier),
         'type': 'movie',
         'title': title,
         'contentRating': config.content_rating,

@@ -57,6 +57,18 @@ class Config(object):
     custom_title = _str('TPDB_CUSTOM_TITLE', '{actors} - {title} [{studio}/{series}]')
     save_to_collection = _bool('TPDB_SAVE_TO_COLLECTION', False)
 
+    # --- movies provider (full releases, TPDB /movies endpoint) ---
+    movies_identifier = _str('TPDB_MOVIES_IDENTIFIER',
+                             'tv.plex.agents.custom.theporndb.movies')
+    movies_title = _str('TPDB_MOVIES_TITLE', 'ThePornDB Movies')
+    movies_enable = _bool('TPDB_MOVIES_ENABLE', True)
+
+    # --- jav provider (TPDB /jav endpoint) ---
+    jav_identifier = _str('TPDB_JAV_IDENTIFIER',
+                          'tv.plex.agents.custom.theporndb.jav')
+    jav_title = _str('TPDB_JAV_TITLE', 'ThePornDB JAV')
+    jav_enable = _bool('TPDB_JAV_ENABLE', False)
+
     # --- tv provider (site = show, year = season, scene = episode) ---
     tv_identifier = _str('TPDB_TV_IDENTIFIER', 'tv.plex.agents.custom.theporndb.tv')
     tv_title = _str('TPDB_TV_TITLE', 'ThePornDB Scenes (TV)')
