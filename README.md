@@ -27,17 +27,20 @@ endpoint to identify it, and hands Plex back a fully populated item: real scene
 title, studio, air date, runtime, cast with headshots, genres, poster and
 background art, and site / parent / network collections.
 
-Two providers run in the same container. **`/scenes`** models each scene as a
-movie and groups them with collections — the behaviour of the old Scenes bundle,
-and the one that needs no changes to your filenames. **`/tv`** models the site as
-a show, the release year as a season, and each scene as an episode, for a library
-you browse by site.
+**`/scenes` is the one you want.** It models each scene as a movie and groups
+them with site, parent and network collections — the behaviour of the old Scenes
+bundle, and it needs no changes to your filenames.
+
+A second provider, **`/tv`**, models the site as a show and each scene as an
+episode. It works, but Plex's TV scanner cannot assign season or episode numbers
+to typical scene filenames, so it requires renaming your library first. Treat it
+as optional — see [TV provider](#tv-provider-optional).
 
 ---
 
 ## Features
 
-- **Two providers, one container** — `/scenes` (movie type) and `/tv` (show/season/episode), registered independently in Plex
+- **Drop-in replacement** — `/scenes` reproduces the old Scenes bundle: movie-type library, matched on filename, no renaming required
 - **Filename identification** — hands the raw filename to TPDB's `parse` endpoint, the same call the bundle relied on; handles `Site - YYYY-MM-DD - Title`, release-style `Site.YY.MM.DD.stuff`, and messier names
 - **Every bundle preference ported** — filename cleanup regex, score method, custom title format, collection prefixes, oshash matching, collected-tagging; all as environment variables
 - **Full metadata** — title, studio, summary, air date, runtime, content rating, genres, cast with face images, poster and background art, trailers
@@ -105,18 +108,21 @@ gunicorn --bind 0.0.0.0:8080 wsgi:app       # prod
 
 ## Providers
 
-| Provider | Plex library | Model | Filename requirements |
-|---|---|---|---|
-| `/scenes` | **Movie** | One scene = one item, grouped by site / parent / network collections | None — matched on filename |
-| `/tv` | **TV Shows** | Site = show, release year = season, scene = episode | Must carry `S<year>E<MMDD>` — see below |
+| Provider | Plex library | Model | Filenames | Status |
+|---|---|---|---|---|
+| **`/scenes`** | Movie | One scene = one item, grouped by site / parent / network collections | Any — matched on filename | **Recommended** |
+| `/tv` | TV Shows | Site = show, release year = season, scene = episode | Must carry `S<year>E<MMDD>` | Optional, needs a rename pass |
 
 ---
 
 ## Plex Setup
 
-1. **Settings → Metadata Agents → Add Provider** → `http://your-server:8080/scenes` (or `/tv`)
+1. **Settings → Metadata Agents → Add Provider** → `http://your-server:8080/scenes`
 2. **Add Agent** — name it, then set the provider you just added as **Primary**
-3. Create the matching library type and pick the agent in the **Advanced** pane
+3. Create a **Movie** library and pick that agent in the **Advanced** pane
+
+That's the whole setup. Scenes are identified from their filenames and grouped
+into collections by site, parent studio and network.
 
 > **Important:** a metadata *refresh* never re-matches. Items that failed to match are stored as `local://` stubs and stay that way. Only a fresh scan of a file Plex has not seen, or a manual **Fix Match**, creates a new binding. After changing provider behaviour, Fix Match one item to verify, then recreate the library.
 
@@ -166,11 +172,19 @@ Forwarding it blindly returned empty results for every file in the library. The 
 
 ---
 
-## Episode Numbering & File Naming
+## TV provider (optional)
 
-TPDB scenes have no episode number, so `/tv` derives one from the air date: `2019-01-25` becomes **S2019E0125**. Stable, ordered, and unique within a site-year. Two scenes from the same site on the same day share an index but stay distinct by GUID.
+Register `/tv` against a **TV Shows** library and each site becomes a show, each
+release year a season, each scene an episode.
 
-**Plex's TV scanner will not number these filenames** — it reads the date but assigns no season or episode, so they land in `[Unknown Season]` and can never bind:
+**Read this before you commit to it.** TPDB scenes have no episode number, so
+`/tv` derives one from the air date: `2019-01-25` becomes **S2019E0125**. Stable,
+ordered, unique within a site-year. Two scenes from the same site on the same day
+share an index but stay distinct by GUID.
+
+The catch is Plex's side, not the provider's. **Plex's TV scanner will not number
+typical scene filenames** — it reads the date but assigns no season or episode, so
+they land in `[Unknown Season]` and can never bind to anything:
 
 | Filename | Plex scanner result |
 |---|---|
@@ -188,7 +202,7 @@ python3 tools/rename_for_plex.py '/path/to/Scenes' --only 'Baby Got Boobs'
 
 It handles ISO dates, `YY.MM.DD` release style and `DD.MM.YYYY`, skips names already in `S##E##` form, and refuses to guess — same-day collisions it can't resolve from the filename are reported as `AMBIGUOUS` and left alone.
 
-**The `/scenes` provider has none of this constraint.** It matches on filename alone, which is why it's the drop-in replacement for the old Scenes bundle.
+**If renaming isn't something you want to do, use `/scenes`.** It matches on filename alone and has none of this constraint, which is why it's the drop-in replacement for the old Scenes bundle.
 
 ---
 
