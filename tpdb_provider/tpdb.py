@@ -1,5 +1,6 @@
 """Thin client for the ThePornDB API."""
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -92,7 +93,9 @@ def get_json(path, params=None):
                 return body
             # 4xx other than 404 will not improve on retry
             if 400 <= resp.status_code < 500:
-                log.error('upstream %s for %s', resp.status_code, url)
+                log.error('upstream %s for %s params=%s body=%s',
+                          resp.status_code, url, params,
+                          (resp.text or '')[:200])
                 return None
             last_error = 'HTTP %s' % resp.status_code
             log.warning('upstream %s (attempt %d/%d) %s',
@@ -106,10 +109,18 @@ def get_json(path, params=None):
     return None
 
 
+OSHASH_RE = re.compile(r'^[0-9a-fA-F]{16}$')
+
+
 def search_scenes(query, oshash=None):
     params = {'parse': query}
-    if oshash:
-        params['hash'] = oshash
+    # TPDB rejects the whole request with 422 "The hash must be valid hash."
+    # if this is anything but a real 16-hex-digit OpenSubtitles hash, and Plex
+    # puts its own hash in every match request - which failed every lookup.
+    if oshash and config.oshash_enable and OSHASH_RE.match(str(oshash).strip()):
+        params['hash'] = str(oshash).strip()
+    elif oshash:
+        log.debug('ignoring unusable hash %r', oshash)
     body = get_json('/scenes', params)
     if not body:
         return []

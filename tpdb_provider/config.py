@@ -35,6 +35,7 @@ class Config(object):
     # 'default' = upstream relevance order, 'custom' = Levenshtein against a format string
     score_method = _str('TPDB_SCORE_METHOD', 'default')
     custom_score = _str('TPDB_CUSTOM_SCORE', '{site} {date} {title}')
+    oshash_enable = _bool('TPDB_OSHASH_ENABLE', False)
     match_by_filename = _bool('TPDB_MATCH_BY_FILENAME', True)
     strip_path = _bool('TPDB_STRIP_PATH', True)
     cleanup_enable = _bool('TPDB_CLEANUP_ENABLE', False)

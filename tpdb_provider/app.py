@@ -96,7 +96,8 @@ def matches():
     if not query:
         return container([])
 
-    results = tpdb.search_scenes(query, oshash=hints.get('hash'))
+    results = tpdb.search_scenes(
+        query, oshash=hints.get('hash') or hints.get('openSubtitleHash'))
     start, size = paging()
 
     items = [mapping.to_match(scene, query, idx)
