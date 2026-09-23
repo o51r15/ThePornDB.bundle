@@ -1,6 +1,5 @@
 services:
   tpdb-provider:
-    build: .
     image: ghcr.io/o51r15/tpdb-provider:dev
     container_name: tpdb-provider
     restart: unless-stopped
