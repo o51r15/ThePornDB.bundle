@@ -1,7 +1,7 @@
 services:
   tpdb-provider:
     build: .
-    image: tpdb-provider:latest
+    image: ghcr.io/o51r15/tpdb-provider:dev
     container_name: tpdb-provider
     restart: unless-stopped
     ports:

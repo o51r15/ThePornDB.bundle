@@ -1,197 +1,190 @@
 # tpdb-provider
 
-A Plex **custom metadata provider** for [ThePornDB](https://theporndb.net/), covering **Scenes**.
+A Plex **custom metadata provider** for [ThePornDB](https://theporndb.net/).
 
-This is the successor to `ThePornDBScenes.bundle`. Plex Media Server 1.43+ replaced
-the old `.bundle` agent framework with an HTTP provider API, so the agent is no
-longer Python 2 code loaded inside PMS — it is a small service PMS talks to over
+This is the successor to `ThePornDB.bundle`. Plex Media Server 1.43 replaced the
+old `.bundle` agent framework with an HTTP provider API, so the agent is no
+longer Python 2 running inside PMS — it is a small service Plex talks to over
 HTTP. The matching and metadata logic from the bundle is carried over; the
 plugin scaffolding is gone.
 
+Two providers run in one container:
+
+| Endpoint | Plex type | Model |
+|---|---|---|
+| `/scenes` | movie | one scene = one item, grouped by site/network collections |
+| `/tv` | show / season / episode | site = show, year = season, scene = episode |
+
+---
+
 ## Requirements
 
-- Plex Media Server **1.43.0 or newer** (custom metadata providers)
+- Plex Media Server **1.43.0+**
 - A ThePornDB API token
 - Docker, or Python 3.9+
 
 ## Run it
 
 ```bash
-cp .env.example .env
-# put your token in TPDB_API_KEY
+cp .env.example .env      # put your token in TPDB_API_KEY
 docker compose up -d
+curl http://<host>:8080/scenes      # should return a MediaProvider document
 ```
-
-Confirm it's alive:
-
-```bash
-curl http://<host>:8080/scenes
-```
-
-You should get a `MediaProvider` document back.
 
 Without Docker:
 
 ```bash
 pip install -r requirements.txt
-TPDB_API_KEY=... python wsgi.py          # dev
-gunicorn --bind 0.0.0.0:8080 wsgi:app    # prod
+TPDB_API_KEY=... python wsgi.py           # dev
+gunicorn --bind 0.0.0.0:8080 wsgi:app     # prod
 ```
 
 ## Register it with Plex
 
-1. **Settings → Metadata Agents → Add Provider**, enter the provider URL:
-   `http://<host>:8080/scenes`
-2. **Add Agent** — name it (e.g. "ThePornDB Scenes"), set the provider you just
-   added as the **Primary** metadata source.
-3. Create a **Movie** library, and in the **Advanced** pane pick your new agent.
+1. **Settings → Metadata Agents → Add Provider** → `http://<host>:8080/scenes`
+   (or `/tv`)
+2. **Add Agent** → name it, set that provider as **Primary**
+3. Create a **Movie** library for `/scenes`, or a **TV Shows** library for `/tv`,
+   and pick the agent in the Advanced pane
 
 Notes:
-- PMS currently sends **unauthenticated** requests to custom providers. Keep the
-  service on your LAN; don't expose it publicly until Plex ships provider auth.
-- HTTPS is not required. Plain HTTP on the LAN is fine.
-- If "Metadata Agents" doesn't appear in Settings, restart the Plex client app.
+
+- Plex sends custom providers **unauthenticated** requests. Keep the service on
+  your LAN until Plex ships provider auth.
+- HTTPS is not required.
+- A metadata *refresh* never re-matches. Items that failed to match are stored
+  as `local://` stubs and stay that way — only a fresh scan of a file Plex has
+  not seen, or a manual **Fix Match**, creates a new binding. After changing
+  provider behaviour, use Fix Match on one item to verify, then recreate the
+  library.
+
+---
+
+## Configuration
+
+All configuration is environment variables; the new provider API has no
+Plex-side preferences UI, so the bundle's `DefaultPrefs.json` settings moved
+here. See `.env.example` for the full list.
+
+| Variable | Old pref | Notes |
+|---|---|---|
+| `TPDB_API_KEY` | `personal_api_key` | Required |
+| `TPDB_IDENTIFIER` | — | Must start with `tv.plex.agents.custom.` |
+| `TPDB_MATCH_BY_FILENAME` | `match_by_filepath_enable` | Plex sends `filename` in match hints |
+| `TPDB_STRIP_PATH` | `filepath_strip_path_enable` | |
+| `TPDB_CLEANUP_ENABLE` / `_REGEX` / `_REPLACE` | `filepath_cleanup*` | Comma-separated regexes |
+| `TPDB_SCORE_METHOD` | `score_method` | `default` or `custom` |
+| `TPDB_CUSTOM_SCORE` | `custom_score` | `{title}` `{site}` `{date}` |
+| `TPDB_OSHASH_ENABLE` | `oshash_matching_enable` | Default **off** — see below |
+| `TPDB_COLLECTIONS_FROM_SITE/PARENTS/NETWORKS/TAGS` | `collections_from_*` | |
+| `TPDB_COLLECTION_*_PREFIX` | `collection_*_prefix` | |
+| `TPDB_CUSTOM_TITLE_ENABLE` / `TPDB_CUSTOM_TITLE` | `custom_title*` | `{title}` `{actors}` `{studio}` `{series}` |
+| `TPDB_SAVE_TO_COLLECTION` | `save_to_collection` | Marks scenes collected on TPDB |
+| `TPDB_CONTENT_RATING` | — | Default `XXX` |
+| `TPDB_CACHE_TTL` | — | In-process cache, seconds |
+| `TPDB_SITE_PAGE_SIZE` | — | Upstream page size, max 100 |
+| `TPDB_MAX_SITE_PAGES` | — | Cap per site (60 × 100 = 6000 scenes) |
+| `TPDB_SITE_FETCH_WORKERS` | — | Concurrent page fetches |
+
+### About `TPDB_OSHASH_ENABLE`
+
+Leave it off unless your files really do carry OpenSubtitles hashes. Plex puts
+its **own** hash in every match request, and TPDB rejects any `hash` that is not
+16 hex digits by failing the entire request:
+
+```
+422 {"message":"The hash must be valid hash.","errors":{"hash":["The hash must be valid hash."]}}
+```
+
+Forwarding it blindly made every lookup return empty. The provider now only
+sends a hash that matches `^[0-9a-fA-F]{16}$`, and only when this is enabled.
+
+---
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/scenes` | Provider manifest (`MediaProvider`) |
-| POST | `/scenes/library/metadata/matches` | Match feature — search |
-| GET | `/scenes/library/metadata/{ratingKey}` | Metadata feature |
-| GET | `/scenes/library/metadata/{ratingKey}/images` | Artwork list |
+| GET | `/scenes` or `/tv` | Provider manifest |
+| POST | `.../library/metadata/matches` | Match feature |
+| GET | `.../library/metadata/{ratingKey}` | Metadata (`?includeChildren=1` embeds children) |
+| GET | `.../library/metadata/{ratingKey}/children` | Seasons of a show, or episodes of a season |
+| GET | `.../library/metadata/{ratingKey}/grandchildren` | All episodes of a show |
+| GET | `.../library/metadata/{ratingKey}/images` | Artwork (movie provider) |
+| GET | `/scenes/selftest?q=<title>` | Validates the upstream contract in one call |
 | GET | `/health` | Liveness |
 
-GUIDs are emitted as `tv.plex.agents.custom.theporndb.scenes://movie/{ratingKey}`,
-where `ratingKey` is the TPDB scene id.
+GUIDs: `<identifier>://<type>/<ratingKey>`. TV rating keys are prefixed
+`show-<siteId>`, `season-<siteId>-<year>`, `ep-<sceneUuid>`.
 
-
-## TV provider (recommended for scene libraries)
-
-Scenes map onto TV far better than onto movies:
-
-| TPDB | Plex |
-|---|---|
-| site (`Baby Got Boobs`) | show |
-| release year | season |
-| scene | episode |
-
-Register it as a **TV Shows** provider:
-
-```
-http://<host>:8080/tv
-```
-
-Identifier `tv.plex.agents.custom.theporndb.tv`, serving types 2, 3 and 4.
-
-Why this fits: Whisparr already names files
-`Site - YYYY-MM-DD - Title [quality].mp4`, which is Plex's own date-based
-episode convention. Plex sends `grandparentTitle` + `date` in the match hints,
-and those map straight onto a TPDB `parse` query - no filename reverse
-engineering needed.
-
-### Episode numbering
+### TV episode numbering
 
 TPDB scenes have no episode number, so `index` is derived from the air date:
-`2019-01-25` becomes episode **125** in season **2019**. Stable, ordered, and
-unique within a site-year. Two scenes released by the same site on the same
-day collide on `index`; they stay distinct by GUID.
+`2019-01-25` → episode **125** in season **2019**. Stable and ordered. Two
+scenes released by the same site on the same day collide on `index`; they stay
+distinct by GUID.
 
-### Endpoints
+**Plex's TV scanner will not number `Show - YYYY-MM-DD - Title.ext` or
+release-style `Show.YY.MM.DD.stuff.ext` files** — they land in
+`[Unknown Season]` with no index and can never bind. Only `S<year>E<MMDD>`
+parses. `tools/rename_for_plex.py` converts a library to that form, resolving
+every file against TPDB for the real title:
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/tv` | Manifest (types 2/3/4) |
-| POST | `/tv/library/metadata/matches` | Match show, season or episode |
-| GET | `/tv/library/metadata/show-<siteId>` | Show |
-| GET | `/tv/library/metadata/season-<siteId>-<year>` | Season |
-| GET | `/tv/library/metadata/ep-<sceneUuid>` | Episode |
-| GET | `.../children` | Seasons of a show, or episodes of a season |
-| GET | `.../grandchildren` | All episodes of a show |
+```bash
+python3 tools/rename_for_plex.py '/path/to/Scenes Agent'     # dry run
+python3 tools/rename_for_plex.py '/path/to/Scenes Agent' --apply
+```
 
-### Performance note
+The movie provider has no such constraint — it matches on filename alone.
 
-Listing a show's seasons means walking every page of that site's scenes
-upstream (20 per page). Serially that measured ~36s on a 600-scene site;
-pages 2..N now go out concurrently (`TPDB_SITE_FETCH_WORKERS`, default 8),
-bringing a cold fetch to ~15s and a warm one to well under a second.
-`TPDB_MAX_SITE_PAGES` (default 30) caps the walk so a site with thousands of
-scenes cannot stall a request.
+---
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `TPDB_TV_IDENTIFIER` | `tv.plex.agents.custom.theporndb.tv` | Provider id |
-| `TPDB_TV_TITLE` | `ThePornDB Scenes (TV)` | Display name |
-| `TPDB_MAX_SITE_PAGES` | `30` | Max upstream pages per site (600 scenes) |
-| `TPDB_SITE_FETCH_WORKERS` | `8` | Concurrent page fetches |
+## Container images
 
-Both providers run in the same container. `/scenes` (movie type) stays
-available for flat libraries whose filenames carry no usable date.
+CI publishes to GHCR on every push to `main`:
 
-## Configuration
+```
+ghcr.io/o51r15/tpdb-provider:dev        <- working tag, what you run day to day
+ghcr.io/o51r15/tpdb-provider:latest     <- releases only (pushed on a vX.Y.Z tag)
+ghcr.io/o51r15/tpdb-provider:vX.Y.Z     <- the release itself
+```
 
-All configuration is environment variables — the new provider API has no Plex-side
-preferences UI, so the old `DefaultPrefs.json` settings moved here. See
-`.env.example` for the full list with defaults.
+`docker-compose.yml` uses `:dev`. Cut a release by tagging:
 
-| Variable | Old pref | Notes |
-|---|---|---|
-| `TPDB_API_KEY` | `personal_api_key` | Required |
-| `TPDB_IDENTIFIER` | — | Must start with `tv.plex.agents.custom.`; suffix is `[a-zA-Z0-9.]` only |
-| `TPDB_MATCH_BY_FILENAME` | `match_by_filepath_enable` | Now defaults on — PMS sends `filename` in match hints |
-| `TPDB_STRIP_PATH` | `filepath_strip_path_enable` | |
-| `TPDB_CLEANUP_ENABLE` / `_REGEX` / `_REPLACE` | `filepath_cleanup*` | Comma-separated regexes |
-| `TPDB_SCORE_METHOD` | `score_method` | `default` or `custom` |
-| `TPDB_CUSTOM_SCORE` | `custom_score` | `{title}` `{site}` `{date}` |
-| `TPDB_COLLECTIONS_FROM_SITE/PARENTS/NETWORKS/TAGS` | `collections_from_*` | |
-| `TPDB_COLLECTION_*_PREFIX` | `collection_*_prefix` | |
-| `TPDB_CUSTOM_TITLE_ENABLE` / `TPDB_CUSTOM_TITLE` | `custom_title*` | `{title}` `{actors}` `{studio}` `{series}` |
-| `TPDB_SAVE_TO_COLLECTION` | `save_to_collection` | Marks scenes collected on TPDB |
-| `TPDB_CONTENT_RATING` | — | Defaults to `XXX` |
-| `TPDB_CACHE_TTL` | — | In-process response cache, seconds; `0` disables |
-
-Dropped: `oshash_matching_enable` (PMS does not send an OpenSubtitles hash in
-match hints — the `hash` field is still honoured if it ever appears),
-`import_trailer` (trailers are exposed as an `Extras` entry unconditionally),
-`logging_level` → `TPDB_LOG_LEVEL`.
-
-## Matching behaviour
-
-1. If the request carries a provider `guid`, or the title/filename contains
-   `[TPDBID=...]` or a `theporndb.net/scenes/...` URL, the scene is fetched
-   directly and scored 100.
-2. Otherwise the filename (path and extension stripped, cleanup regexes applied)
-   or the title is sent to `/scenes?parse=`, with the year appended when known.
-3. Results are scored and sorted. `manual: 1` requests return the full result
-   set; automatic matches are capped at `X-Plex-Container-Size`.
-
-As before, filenames in the form `Site YYYY-MM-DD Title` match best.
+```bash
+git tag v1.0.0 && git push origin --tags
+```
 
 ## Tests
 
 ```bash
-python tests/test_provider.py
+python tests/test_provider.py    # 16
+python tests/test_tv.py          # 30
 ```
 
-Twelve tests covering the manifest shape, all three match paths, pagination,
-metadata mapping, sparse upstream payloads, and 404 handling. Upstream is
-stubbed — no API token needed.
+Upstream is stubbed; no token needed. They cover the manifest shape, all match
+paths, pagination, the `Children` container shape, and the hash handling —
+every one written against a bug that actually occurred.
+
+## Notes on Plex's provider API
+
+Things that cost real debugging time:
+
+- Paging arrives as **query parameters** on GETs (`?X-Plex-Container-Start=…`),
+  not only as headers. Reading headers alone makes every page identical.
+- `Children` must be an **object** (`{"size": n, "Metadata": [...]}`), not an
+  array. An array fails the whole response with
+  `failed to parse JSON response: 'object expected' at 1:44`.
+- Plex never sends a `type: 4` episode match. It matches show, then season with
+  `includeChildren=1`, and binds files to the children in that response.
+- Its scanner falls back to season 1 when it cannot parse a season, so the
+  provider recovers the year from a date in the filename.
 
 ## Changes from the bundle
 
-- Python 3, Flask, runs as a service instead of inside PMS.
-- Fixed the retry loop: backoff is now exponential (the bundle's
-  `sleep_time = sleep_time * x` evaluated to 0 on the first retry, and the
-  leaked `str_error` was never cleared between attempts, so one failure poisoned
-  the remaining tries).
-- TLS verification is on. The bundle used `verify=False` with the warning muted.
-- No bare `except:`. Missing upstream fields (`description`, `date`, `posters`,
-  `background`) no longer raise — the bundle indexed them unguarded.
-- Bundled `requests`/`urllib3`/`idna` vendored copies are gone; pinned in
-  `requirements.txt` instead.
-
-## Not done yet
-
-Movies and JAV. They are the same shape with a different upstream path
-(`/movies`, `/jav`) and their own provider identifier — the blueprint in
-`tpdb_provider/app.py` is parameterisable when you want them.
+- Python 3, Flask, runs as a service instead of inside PMS
+- Exponential retry backoff (the bundle's `sleep_time * x` was 0 on the first
+  retry, and its leaked `str_error` was never cleared between attempts)
+- TLS verification on; the bundle used `verify=False` with the warning muted
+- No bare `except:`; missing upstream fields no longer raise
+- Vendored `requests`/`urllib3`/`idna` dropped in favour of pinned requirements
