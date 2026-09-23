@@ -414,7 +414,8 @@ def _match_season(hints):
     # Plex sends includeChildren=1 on the season match and binds its files to
     # whatever children come back - it never sends a type=4 episode match.
     if _hint_wants_children(hints):
-        item['Children'] = _episodes_for(site, site.get('id'), year)
+        item['Children'] = children_block(
+            _episodes_for(site, site.get('id'), year))
     return container([item])
 
 
@@ -458,6 +459,17 @@ def _match_episode(hints):
     return container(items[start:start + size], offset=start, total=len(items))
 
 
+def children_block(items):
+    """Plex wants Children as a CONTAINER, not a bare array.
+
+    Emitting a list made Plex fail the whole response with
+    'failed to parse JSON response: object expected at 1:44' - column 44
+    being exactly the '[' of "Children":[ - so every season match was
+    discarded and no episode could ever bind.
+    """
+    return {'size': len(items), 'Metadata': items}
+
+
 def _wants_children():
     return str(request.args.get('includeChildren') or '') in ('1', 'true')
 
@@ -493,7 +505,7 @@ def metadata(rating_key):
             # Plex asks for the show with includeChildren=1 and expects the
             # seasons inline. Returning the bare show made Plex treat it as
             # having no seasons, so nothing underneath could ever match.
-            item['Children'] = _seasons_for(site, ident)
+            item['Children'] = children_block(_seasons_for(site, ident))
         return container([item])
 
     if kind == 'season':
@@ -502,7 +514,8 @@ def metadata(rating_key):
             return jsonify({'error': 'not found'}), 404
         item = make_season(site, year)
         if _wants_children():
-            item['Children'] = _episodes_for(site, ident, year)
+            item['Children'] = children_block(
+                _episodes_for(site, ident, year))
         return container([item])
 
     if kind == 'episode':
