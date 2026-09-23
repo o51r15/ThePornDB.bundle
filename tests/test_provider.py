@@ -171,6 +171,50 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(mapping.levenshtein('', 'abc'), 3)
         self.assertEqual(self.app.get('/health').get_json()['status'], 'ok')
 
+class HashTest(unittest.TestCase):
+    """Regression: Plex puts its own hash in every match request. Forwarding it
+    made TPDB reject the whole call with
+    422 {"message":"The hash must be valid hash."} - 4222 times in one scan,
+    so every single file came back unmatched."""
+
+    def setUp(self):
+        self.app = create_app().test_client()
+
+    def _hash_sent(self, payload, oshash_enable=False):
+        seen = {}
+        def fake(path, params=None):
+            seen.update(params or {})
+            return {'data': []}
+        old = tpdb.config.oshash_enable
+        tpdb.config.oshash_enable = oshash_enable
+        try:
+            with mock.patch.object(tpdb, 'get_json', side_effect=fake):
+                self.app.post('/scenes/library/metadata/matches', json=payload)
+        finally:
+            tpdb.config.oshash_enable = old
+        return seen
+
+    def test_plex_hash_is_never_forwarded_by_default(self):
+        sent = self._hash_sent({'type': 1, 'title': 'x',
+                                'hash': '5d7768244de0ee001fcc7fed'})
+        self.assertNotIn('hash', sent)
+
+    def test_junk_hash_rejected_even_when_enabled(self):
+        for bad in ('abc123', '', 'not-a-hash', '5d7768244de0ee001fcc7fed'):
+            sent = self._hash_sent({'type': 1, 'title': 'x', 'hash': bad},
+                                   oshash_enable=True)
+            self.assertNotIn('hash', sent, 'forwarded bad hash %r' % bad)
+
+    def test_real_oshash_forwarded_when_enabled(self):
+        sent = self._hash_sent({'type': 1, 'title': 'x',
+                                'hash': '8e245d9679d31e12'}, oshash_enable=True)
+        self.assertEqual(sent.get('hash'), '8e245d9679d31e12')
+
+    def test_real_oshash_still_suppressed_when_disabled(self):
+        sent = self._hash_sent({'type': 1, 'title': 'x',
+                                'hash': '8e245d9679d31e12'})
+        self.assertNotIn('hash', sent)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
