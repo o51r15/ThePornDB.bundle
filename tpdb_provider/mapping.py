@@ -76,10 +76,33 @@ def extract_id(text):
     return None
 
 
+TITLE_KEYS = ('title', 'name', 'originalTitle', 'original_title',
+              'searchTitle', 'search_title', 'query', 'q')
+FILE_KEYS = ('filename', 'file', 'fileName', 'path', 'filePath', 'file_path')
+YEAR_KEYS = ('year', 'releaseYear', 'release_year')
+HASH_KEYS = ('hash', 'openSubtitlesHash', 'openSubtitleHash',
+             'opensubtitlesHash', 'osHash')
+
+
+def hint(hints, keys):
+    """First non-empty value among `keys`.
+
+    Plex does not use one spelling for these. A movie match request has
+    arrived as 'name' where a scene one used 'title', and reading only
+    'title' made build_query return '' - so every movie lookup answered
+    with an empty container and PMS logged "failed to return a result".
+    """
+    for key in keys:
+        value = hints.get(key)
+        if value not in (None, ''):
+            return value
+    return ''
+
+
 def build_query(hints):
     """Work out what to search for, from a match request's hints."""
-    title = (hints.get('title') or '').strip()
-    filename = hints.get('filename') or ''
+    title = ('%s' % hint(hints, TITLE_KEYS)).strip()
+    filename = hint(hints, FILE_KEYS) or ''
 
     if filename and (config.match_by_filename or not title):
         candidate = filename
@@ -93,7 +116,7 @@ def build_query(hints):
     if not title:
         return ''
 
-    year = hints.get('year')
+    year = hint(hints, YEAR_KEYS)
     if year and str(year) not in title:
         return '%s %s' % (title, year)
     return title

@@ -89,8 +89,8 @@ def make_provider(name, identifier, title, kind):
         if guid.startswith(identifier + '://'):
             scene_id = guid.rsplit('/', 1)[-1]
         if not scene_id:
-            scene_id = (mapping.extract_id(hints.get('title'))
-                        or mapping.extract_id(hints.get('filename')))
+            scene_id = (mapping.extract_id(mapping.hint(hints, mapping.TITLE_KEYS))
+                        or mapping.extract_id(mapping.hint(hints, mapping.FILE_KEYS)))
 
         if scene_id:
             scene = tpdb.get_scene(scene_id, kind=kind)
@@ -106,7 +106,7 @@ def make_provider(name, identifier, title, kind):
 
         results = tpdb.search_scenes(
             query, kind=kind,
-            oshash=hints.get('hash') or hints.get('openSubtitleHash'))
+            oshash=mapping.hint(hints, mapping.HASH_KEYS))
         start, size = paging()
 
         items = [mapping.to_match(scene, query, idx, identifier)
