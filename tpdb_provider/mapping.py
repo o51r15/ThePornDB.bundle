@@ -319,11 +319,16 @@ def to_metadata(scene, identifier=None):
 
     trailer = scene.get('trailer')
     if trailer:
-        item['Extras'] = [{
+        # Plex wants Extras as a CONTAINER, not a bare array - exactly like
+        # Children on the TV side. A list made PMS reject the whole item with
+        # "failed to parse JSON response: 'object expected' at 1:100", column
+        # 100 being the '[' of "Extras":[ - so no scene metadata ever landed.
+        extras = [{
             'type': 'trailer',
             'title': 'Trailer',
             'url': trailer,
             'thumb': art or poster or '',
         }]
+        item['Extras'] = {'size': len(extras), 'Metadata': extras}
 
     return item

@@ -124,7 +124,7 @@ class ProviderTest(unittest.TestCase):
         types = {i['type']: i['url'] for i in item['Image']}
         self.assertEqual(types['coverPoster'], 'http://img/poster.jpg')
         self.assertEqual(types['background'], 'http://img/bg.jpg')
-        self.assertEqual(item['Extras'][0]['url'], 'http://video/trailer.mp4')
+        self.assertEqual(item['Extras']['Metadata'][0]['url'], 'http://video/trailer.mp4')
 
     def test_metadata_404(self):
         with mock.patch.object(tpdb, 'get_scene', return_value=None):
